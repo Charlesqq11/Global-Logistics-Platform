@@ -1,10 +1,12 @@
-﻿from functools import lru_cache
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_parents = Path(__file__).resolve().parents
+# Repo root in the monorepo layout; shallower when deployed from apps/api only.
+PROJECT_ROOT = _parents[4] if len(_parents) > 4 else _parents[-1]
 ENV_FILE = PROJECT_ROOT / ".env"
 
 
