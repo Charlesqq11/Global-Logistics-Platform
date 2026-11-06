@@ -14,7 +14,7 @@ from app.schemas.assistant import AssistantConversationMessage
 logger = logging.getLogger(__name__)
 
 client = AsyncOpenAI(
-    api_key=settings.groq_api_key,
+    api_key=settings.groq_api_key or "not-configured",
     base_url="https://api.groq.com/openai/v1",
     timeout=25.0,
     max_retries=1,
