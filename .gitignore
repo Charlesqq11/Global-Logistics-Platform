@@ -1,0 +1,72 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build / coverage
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local databases / temporary files
+*.db
+*.sqlite
+*.sqlite3
+
+# Test artifacts
+.pytest_cache/
+playwright-report/
+test-results/
+
+# Docker
+docker-compose.override.yml
+
+# Private uploads and local storage
+apps/api/storage/
+
+# Database backups and project archives
+*.dump
+*.zip
+*.bak
+*.backup*
+
+# Temporary test documents
+apps/api/test-document.txt
+
+# Local environment files
+.env
+
+# Exclude local backup and misplaced duplicate
+apps/api/app/models/payment.py.before_bank_snapshot
+apps/web/apps/

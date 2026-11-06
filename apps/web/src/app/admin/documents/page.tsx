@@ -1,0 +1,851 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+ArrowLeft,
+ArrowUpRight,
+CheckCircle2,
+ChevronDown,
+File,
+FileCheck2,
+FileText,
+Globe2,
+LockKeyhole,
+Package,
+Plus,
+RefreshCw,
+Search,
+ShieldCheck,
+Trash2,
+UploadCloud,
+X,
+} from "lucide-react";
+
+type Shipment = {
+id: string;
+tracking_number: string;
+status?: string;
+origin_country?: string;
+destination_country?: string;
+};
+
+type ShipmentDocument = {
+id: string;
+shipment_id: string;
+document_type: string;
+visibility: string;
+file_name: string;
+storage_key: string;
+mime_type: string;
+uploaded_at: string;
+updated_at?: string;
+};
+
+const documentTypes = [
+{ value: "commercial_invoice", label: "Commercial Invoice" },
+{ value: "customs_declaration", label: "Customs Declaration" },
+{ value: "packing_list", label: "Packing List" },
+{ value: "shipping_label", label: "Shipping Label" },
+{ value: "proof_of_payment", label: "Proof of Payment" },
+{ value: "delivery_document", label: "Delivery Document" },
+{ value: "customs_release", label: "Customs Release" },
+{ value: "other", label: "Other Document" },
+];
+
+function formatDocumentType(value: string) {
+return (
+documentTypes.find((item) => item.value === value)?.label ??
+value.replace(/_/g, " ")
+);
+}
+
+function formatDate(value?: string) {
+if (!value) return "—";
+
+const date = new Date(value);
+
+if (Number.isNaN(date.getTime())) return "—";
+
+return new Intl.DateTimeFormat("en", {
+day: "2-digit",
+month: "short",
+year: "numeric",
+hour: "2-digit",
+minute: "2-digit",
+}).format(date);
+}
+
+function formatFileSizeLabel(mimeType: string) {
+return mimeType || "Unknown file type";
+}
+
+export default function DocumentsManagementPage() {
+const [shipments, setShipments] = useState<Shipment[]>([]);
+const [selectedShipment, setSelectedShipment] = useState("");
+const [documents, setDocuments] = useState<ShipmentDocument[]>([]);
+
+const [isLoadingShipments, setIsLoadingShipments] = useState(true);
+const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+const [isUploading, setIsUploading] = useState(false);
+const [deletingId, setDeletingId] = useState<string | null>(null);
+
+const [search, setSearch] = useState("");
+const [showUpload, setShowUpload] = useState(false);
+
+const [documentType, setDocumentType] = useState("commercial_invoice");
+const [visibility, setVisibility] = useState("internal");
+const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+const [error, setError] = useState<string | null>(null);
+const [success, setSuccess] = useState<string | null>(null);
+
+const selectedShipmentRecord = useMemo(
+() => shipments.find((shipment) => shipment.id === selectedShipment),
+[shipments, selectedShipment],
+);
+
+const loadShipments = useCallback(async () => {
+setIsLoadingShipments(true);
+setError(null);
+
+try {
+  const response = await fetch("/api/admin/shipments", {
+    method: "GET",
+    cache: "no-store",
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.detail ?? "Unable to load shipments.");
+  }
+  const records: Shipment[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.shipments)
+        ? data.shipments
+        : [];
+  setShipments(records);
+  setSelectedShipment((current) => {
+    if (current && records.some((item) => item.id === current)) {
+      return current;
+    }
+    return records[0]?.id ?? "";
+  });
+} catch (err) {
+  setError(
+    err instanceof Error ? err.message : "Unable to load shipments.",
+  );
+} finally {
+  setIsLoadingShipments(false);
+}
+
+}, []);
+
+const loadDocuments = useCallback(async (shipmentId: string) => {
+if (!shipmentId) {
+setDocuments([]);
+return;
+}
+
+setIsLoadingDocuments(true);
+setError(null);
+try {
+  const response = await fetch(
+    `/api/admin/documents/${encodeURIComponent(shipmentId)}/documents`,
+    {
+      method: "GET",
+      cache: "no-store",
+    },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.detail ?? "Unable to load documents.");
+  }
+  const records: ShipmentDocument[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+      ? data.items
+      : [];
+  setDocuments(records);
+} catch (err) {
+  setDocuments([]);
+  setError(
+    err instanceof Error ? err.message : "Unable to load documents.",
+  );
+} finally {
+  setIsLoadingDocuments(false);
+}
+
+}, []);
+
+useEffect(() => {
+loadShipments();
+}, [loadShipments]);
+
+useEffect(() => {
+if (selectedShipment) {
+loadDocuments(selectedShipment);
+} else {
+setDocuments([]);
+}
+}, [selectedShipment, loadDocuments]);
+
+const filteredDocuments = useMemo(() => {
+const query = search.trim().toLowerCase();
+
+if (!query) return documents;
+return documents.filter((document) => {
+  return (
+    document.file_name.toLowerCase().includes(query) ||
+    formatDocumentType(document.document_type)
+      .toLowerCase()
+      .includes(query) ||
+    document.visibility.toLowerCase().includes(query)
+  );
+});
+
+}, [documents, search]);
+
+const customerDocuments = documents.filter(
+(document) => document.visibility === "customer",
+).length;
+
+const internalDocuments = documents.filter(
+(document) => document.visibility === "internal",
+).length;
+
+async function handleUpload(event: React.FormEvent) {
+event.preventDefault();
+
+if (!selectedShipment) {
+  setError("Select a shipment before uploading a document.");
+  return;
+}
+if (!selectedFile) {
+  setError("Choose a file to upload.");
+  return;
+}
+setIsUploading(true);
+setError(null);
+setSuccess(null);
+try {
+  const formData = new FormData();
+  formData.append("document_type", documentType);
+  formData.append("visibility", visibility);
+  formData.append("file", selectedFile);
+  const response = await fetch(
+    `/api/admin/documents/${encodeURIComponent(selectedShipment)}/documents`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.detail ?? "Document upload failed.");
+  }
+  setSuccess("Document uploaded successfully.");
+  setSelectedFile(null);
+  setShowUpload(false);
+  await loadDocuments(selectedShipment);
+} catch (err) {
+  setError(
+    err instanceof Error ? err.message : "Document upload failed.",
+  );
+} finally {
+  setIsUploading(false);
+}
+
+}
+
+async function handleDelete(document: ShipmentDocument) {
+const confirmed = window.confirm(`Delete "${document.file_name}"? This action cannot be undone.`);
+
+if (!confirmed) return;
+setDeletingId(document.id);
+setError(null);
+setSuccess(null);
+try {
+  const response = await fetch(
+    `/api/admin/documents/${encodeURIComponent(selectedShipment)}/documents/${encodeURIComponent(document.id)}`,
+    {
+      method: "DELETE",
+    },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.detail ?? "Document deletion failed.");
+  }
+  setSuccess("Document deleted successfully.");
+  await loadDocuments(selectedShipment);
+} catch (err) {
+  setError(
+    err instanceof Error ? err.message : "Document deletion failed.",
+  );
+} finally {
+  setDeletingId(null);
+}
+
+}
+
+return (
+  <main className="min-h-screen bg-[#07090d] text-white">
+    <div className="flex min-h-screen">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-white/[0.07] bg-[#090c11] lg:flex">
+        <div className="border-b border-white/[0.07] px-5 py-6">
+          <Link href="/admin" className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.1] bg-white/[0.04] text-sm font-semibold tracking-[0.18em]">
+              GL
+            </div>
+            <div>
+              <div className="text-sm font-semibold tracking-[0.18em]">
+                GL
+              </div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-[0.22em] text-white/35">
+                Operations
+              </div>
+            </div>
+          </Link>
+        </div>
+      <nav className="flex-1 px-3 py-5">
+        <div className="mb-3 px-3 text-[10px] font-medium uppercase tracking-[0.2em] text-white/25">
+          Command Center
+        </div>
+        <Link
+          href="/admin"
+          className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/50 transition hover:bg-white/[0.04] hover:text-white"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Overview
+        </Link>
+        <div className="mb-3 mt-7 px-3 text-[10px] font-medium uppercase tracking-[0.2em] text-white/25">
+          Operations
+        </div>
+        <Link
+          href="/admin/shipments"
+          className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/50 transition hover:bg-white/[0.04] hover:text-white"
+        >
+          <Package className="h-4 w-4" />
+          Shipment Operations
+        </Link>
+        <Link
+          href="/admin/customs"
+          className="mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/50 transition hover:bg-white/[0.04] hover:text-white"
+        >
+          <ShieldCheck className="h-4 w-4" />
+          Customs Control
+        </Link>
+        <Link
+          href="/admin/payments"
+          className="mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/50 transition hover:bg-white/[0.04] hover:text-white"
+        >
+          <FileCheck2 className="h-4 w-4" />
+          Payments
+        </Link>
+        <Link
+          href="/admin/documents"
+          className="mt-1 flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.07] px-3 py-3 text-sm text-white"
+        >
+          <FileText className="h-4 w-4" />
+          Documents
+        </Link>
+      </nav>
+      <div className="border-t border-white/[0.07] p-5">
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <span className="text-xs font-medium text-white/70">
+              Operations online
+            </span>
+          </div>
+          <p className="mt-2 text-[11px] leading-5 text-white/30">
+            Secure document control workspace.
+          </p>
+        </div>
+      </div>
+    </aside>
+    <section className="min-w-0 flex-1">
+      <header className="border-b border-white/[0.07] bg-[#07090d]/90 px-5 py-5 backdrop-blur-xl sm:px-8">
+        <div className="mx-auto flex max-w-[1500px] flex-col justify-between gap-5 lg:flex-row lg:items-center">
+          <div>
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-white/30">
+              <Link href="/admin" className="hover:text-white/60">
+                Operations
+              </Link>
+              <span>/</span>
+              <span>Documents</span>
+            </div>
+            <h1 className="mt-3 text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">
+              Documents Management
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/40">
+              Centralized shipment documentation, secure file handling
+              and controlled customer visibility.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setSuccess(null);
+              setShowUpload(true);
+            }}
+            disabled={!selectedShipment}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Plus className="h-4 w-4" />
+            Upload Document
+          </button>
+        </div>
+      </header>
+      <div className="mx-auto max-w-[1500px] px-5 py-7 sm:px-8 sm:py-9">
+        {error && (
+          <div className="mb-5 flex items-start justify-between gap-4 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3">
+            <p className="text-sm text-red-300">{error}</p>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+            >
+              <X className="h-4 w-4 text-red-300/60" />
+            </button>
+          </div>
+        )}
+        {success && (
+          <div className="mb-5 flex items-center gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-4 py-3">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <p className="text-sm text-emerald-300">{success}</p>
+          </div>
+        )}
+        <section className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5 sm:p-6">
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+            <div>
+              <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/30">
+                Shipment workspace
+              </div>
+              <h2 className="mt-2 text-lg font-semibold">
+                Select shipment
+              </h2>
+              <p className="mt-1 text-xs text-white/35">
+                Choose a shipment to manage its associated documents.
+              </p>
+            </div>
+            <div className="flex w-full flex-col gap-2 sm:flex-row lg:max-w-xl">
+              <div className="relative min-w-0 flex-1">
+                <select
+                  value={selectedShipment}
+                  onChange={(event) =>
+                    setSelectedShipment(event.target.value)
+                  }
+                  disabled={isLoadingShipments || shipments.length === 0}
+                  className="h-12 w-full appearance-none rounded-xl border border-white/[0.09] bg-[#0b0f14] px-4 pr-10 text-sm text-white outline-none focus:border-white/25 disabled:opacity-50"
+                >
+                  {shipments.length === 0 && (
+                    <option value="">
+                      {isLoadingShipments
+                        ? "Loading shipments..."
+                        : "No shipments available"}
+                    </option>
+                  )}
+                  {shipments.map((shipment) => (
+                    <option key={shipment.id} value={shipment.id}>
+                      {shipment.tracking_number}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+              </div>
+              <button
+                type="button"
+                onClick={loadShipments}
+                disabled={isLoadingShipments}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-white/[0.09] bg-white/[0.035] px-4 text-xs text-white/60 transition hover:bg-white/[0.07] disabled:opacity-40"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${
+                    isLoadingShipments ? "animate-spin" : ""
+                  }`}
+                />
+                Refresh
+              </button>
+            </div>
+          </div>
+          {selectedShipmentRecord && (
+            <div className="mt-5 flex flex-col gap-3 rounded-xl border border-white/[0.07] bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04]">
+                  <Package className="h-5 w-5 text-white/60" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">
+                    {selectedShipmentRecord.tracking_number}
+                  </div>
+                  <div className="mt-1 text-xs text-white/35">
+                    {selectedShipmentRecord.origin_country ?? "Origin"}
+                    {" → "}
+                    {selectedShipmentRecord.destination_country ??
+                      "Destination"}
+                  </div>
+                </div>
+              </div>
+              <div className="text-xs text-white/35">
+                Shipment ID:{" "}
+                <span className="text-white/60">
+                  {selectedShipmentRecord.id}
+                </span>
+              </div>
+            </div>
+          )}
+        </section>
+        <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                Total Documents
+              </span>
+              <FileText className="h-4 w-4 text-white/35" />
+            </div>
+            <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">
+              {documents.length}
+            </div>
+            <p className="mt-2 text-xs text-white/30">
+              Attached to selected shipment
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                Customer Visible
+              </span>
+              <Globe2 className="h-4 w-4 text-cyan-300/60" />
+            </div>
+            <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">
+              {customerDocuments}
+            </div>
+            <p className="mt-2 text-xs text-white/30">
+              Documents shared with customers
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                Internal Only
+              </span>
+              <LockKeyhole className="h-4 w-4 text-amber-300/60" />
+            </div>
+            <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">
+              {internalDocuments}
+            </div>
+            <p className="mt-2 text-xs text-white/30">
+              Restricted operational documents
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+                Storage Status
+              </span>
+              <ShieldCheck className="h-4 w-4 text-emerald-300/60" />
+            </div>
+            <div className="mt-3 flex items-center gap-2 text-lg font-semibold">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Connected
+            </div>
+            <p className="mt-2 text-xs text-white/30">
+              Document storage service
+            </p>
+          </div>
+        </section>
+        <section className="mt-6 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
+          <div className="flex flex-col justify-between gap-4 border-b border-white/[0.07] p-5 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="text-sm font-semibold">
+                Document Registry
+              </h2>
+              <p className="mt-1 text-xs text-white/35">
+                Files and records associated with this shipment.
+              </p>
+            </div>
+            <div className="relative w-full sm:max-w-xs">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search documents..."
+                className="h-10 w-full rounded-xl border border-white/[0.08] bg-black/20 pl-10 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-white/20"
+              />
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[750px]">
+              <thead>
+                <tr className="border-b border-white/[0.06] text-left">
+                  <th className="px-5 py-4 text-[10px] font-medium uppercase tracking-[0.16em] text-white/30">
+                    Document
+                  </th>
+                  <th className="px-5 py-4 text-[10px] font-medium uppercase tracking-[0.16em] text-white/30">
+                    Category
+                  </th>
+                  <th className="px-5 py-4 text-[10px] font-medium uppercase tracking-[0.16em] text-white/30">
+                    Visibility
+                  </th>
+                  <th className="px-5 py-4 text-[10px] font-medium uppercase tracking-[0.16em] text-white/30">
+                    Uploaded
+                  </th>
+                  <th className="px-5 py-4 text-right text-[10px] font-medium uppercase tracking-[0.16em] text-white/30">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoadingDocuments ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-16 text-center">
+                      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-white/70" />
+                      <p className="mt-4 text-sm text-white/40">
+                        Loading document registry...
+                      </p>
+                    </td>
+                  </tr>
+                ) : filteredDocuments.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-16 text-center">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035]">
+                        <File className="h-5 w-5 text-white/35" />
+                      </div>
+                      <p className="mt-4 text-sm font-medium text-white/70">
+                        No documents found
+                      </p>
+                      <p className="mt-1 text-xs text-white/30">
+                        Upload a document or select another shipment.
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredDocuments.map((document) => (
+                    <tr
+                      key={document.id}
+                      className="border-b border-white/[0.05] transition hover:bg-white/[0.025]"
+                    >
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035]">
+                            <FileText className="h-4 w-4 text-white/55" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="max-w-[260px] truncate text-sm font-medium text-white/85">
+                              {document.file_name}
+                            </p>
+                            <p className="mt-1 text-[10px] text-white/30">
+                              {formatFileSizeLabel(document.mime_type)}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-xs text-white/55">
+                        {formatDocumentType(document.document_type)}
+                      </td>
+                      <td className="px-5 py-4">
+                        {document.visibility === "customer" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/[0.08] px-2.5 py-1 text-[10px] text-cyan-300">
+                            <Globe2 className="h-3 w-3" />
+                            Customer
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/[0.08] px-2.5 py-1 text-[10px] text-amber-300">
+                            <LockKeyhole className="h-3 w-3" />
+                            Internal
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-xs text-white/40">
+                        {formatDate(document.uploaded_at)}
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(document)}
+                          disabled={deletingId === document.id}
+                          aria-label={`Delete ${document.file_name}`}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-400/10 text-red-300/60 transition hover:border-red-400/30 hover:bg-red-400/[0.08] hover:text-red-300 disabled:opacity-40"
+                        >
+                          {deletingId === document.id ? (
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-col justify-between gap-2 border-t border-white/[0.06] px-5 py-4 text-[11px] text-white/30 sm:flex-row sm:items-center">
+            <span>
+              Showing {filteredDocuments.length} of {documents.length} documents
+            </span>
+            <span>Shipment document control</span>
+          </div>
+        </section>
+        <section className="mt-6 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+          <div className="flex gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035]">
+              <ShieldCheck className="h-4 w-4 text-white/50" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">
+                Document access and visibility
+              </p>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-white/35">
+                Customer-visible documents are intended for customer
+                access. Internal documents are restricted to authorized
+                operations personnel. Actual customer download access
+                must also be enforced by the backend.
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+  {showUpload && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
+      <div className="my-auto w-full max-w-xl overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0b0f14] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/[0.07] px-6 py-5">
+          <div>
+            <p className="text-lg font-semibold">Upload Document</p>
+            <p className="mt-1 text-xs text-white/35">
+              Add a document to the selected shipment.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowUpload(false)}
+            disabled={isUploading}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] text-white/50 transition hover:bg-white/[0.06] hover:text-white"
+            aria-label="Close upload dialog"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleUpload} className="space-y-5 p-6">
+          <div>
+            <label className="mb-2 block text-xs font-medium text-white/65">
+              Shipment
+            </label>
+            <div className="rounded-xl border border-white/[0.08] bg-black/20 px-4 py-3 text-sm text-white/70">
+              {selectedShipmentRecord?.tracking_number ?? "No shipment selected"}
+            </div>
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-medium text-white/65">
+              Document category
+            </label>
+            <select
+              value={documentType}
+              onChange={(event) => setDocumentType(event.target.value)}
+              className="h-12 w-full rounded-xl border border-white/[0.08] bg-[#080b0f] px-4 text-sm text-white outline-none focus:border-white/25"
+            >
+              {documentTypes.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-medium text-white/65">
+              Access visibility
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setVisibility("internal")}
+                className={`rounded-xl border p-4 text-left transition ${
+                  visibility === "internal"
+                    ? "border-amber-400/30 bg-amber-400/[0.07]"
+                    : "border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05]"
+                }`}
+              >
+                <LockKeyhole className="h-4 w-4 text-amber-300" />
+                <p className="mt-3 text-sm font-medium">Internal</p>
+                <p className="mt-1 text-[10px] text-white/35">
+                  Operations access
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisibility("customer")}
+                className={`rounded-xl border p-4 text-left transition ${
+                  visibility === "customer"
+                    ? "border-cyan-400/30 bg-cyan-400/[0.07]"
+                    : "border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05]"
+                }`}
+              >
+                <Globe2 className="h-4 w-4 text-cyan-300" />
+                <p className="mt-3 text-sm font-medium">Customer</p>
+                <p className="mt-1 text-[10px] text-white/35">
+                  Customer-visible
+                </p>
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-medium text-white/65">
+              Select file
+            </label>
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.15] bg-black/20 px-5 py-8 text-center transition hover:border-white/30 hover:bg-white/[0.025]">
+              <UploadCloud className="h-7 w-7 text-white/50" />
+              <span className="mt-3 text-sm font-medium text-white/75">
+                {selectedFile ? selectedFile.name : "Choose a document"}
+              </span>
+              <span className="mt-1 text-xs text-white/30">
+                Select a file from your device
+              </span>
+              <input
+                type="file"
+                className="hidden"
+                onChange={(event) =>
+                  setSelectedFile(event.target.files?.[0] ?? null)
+                }
+              />
+            </label>
+          </div>
+          <div className="flex flex-col-reverse gap-3 border-t border-white/[0.07] pt-5 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowUpload(false)}
+              disabled={isUploading}
+              className="rounded-xl border border-white/[0.09] px-5 py-3 text-sm text-white/60 transition hover:bg-white/[0.05]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isUploading || !selectedFile}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isUploading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="h-4 w-4" />
+                  Upload Document
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )}
+</main>
+
+);
+}
