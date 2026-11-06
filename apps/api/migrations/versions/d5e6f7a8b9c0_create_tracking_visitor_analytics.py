@@ -183,7 +183,14 @@ def upgrade() -> None:
     ).scalar_one_or_none()
 
     if admin_role_id is None:
-        raise RuntimeError("SUPER_ADMIN role was not found.")
+        admin_role_id = uuid4()
+        connection.execute(
+            sa.text(
+                "INSERT INTO roles (id, name, description, is_active, created_at) "
+                "VALUES (:id, 'SUPER_ADMIN', 'Full administrative access.', true, :now)"
+            ),
+            {"id": admin_role_id, "now": datetime.now(timezone.utc)},
+        )
 
     permission_id = connection.execute(
         sa.select(permissions.c.id).where(
