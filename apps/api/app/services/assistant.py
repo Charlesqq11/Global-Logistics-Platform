@@ -179,8 +179,8 @@ async def generate_assistant_reply(
     conversation_history: list[AssistantConversationMessage],
     shipment: Shipment | None = None,
 ) -> str:
-    if not settings.openai_api_key:
-        raise RuntimeError("OpenAI API key is not configured.")
+    if not settings.groq_api_key:
+        raise RuntimeError("Groq API key (GROQ_API_KEY) is not configured.")
 
     if context == "tracking" and shipment is None:
         raise ValueError("Verified shipment information is required.")
