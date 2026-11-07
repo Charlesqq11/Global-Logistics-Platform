@@ -1,4 +1,4 @@
-# Environment / secrets
+﻿# Environment / secrets
 .env
 .env.*
 !.env.example
@@ -58,8 +58,6 @@ apps/api/storage/
 # Database backups and project archives
 *.dump
 *.zip
-*.bak
-*.backup*
 
 # Temporary test documents
 apps/api/test-document.txt
@@ -68,5 +66,3 @@ apps/api/test-document.txt
 .env
 
 # Exclude local backup and misplaced duplicate
-apps/api/app/models/payment.py.before_bank_snapshot
-apps/web/apps/
